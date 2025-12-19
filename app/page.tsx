@@ -1,38 +1,123 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ShoppingItem } from '@/types/shopping';
+import { supabase } from '@/lib/supabase';
 
 export default function Home() {
   const [items, setItems] = useState<ShoppingItem[]>([]);
   const [productName, setProductName] = useState('');
   const [shopName, setShopName] = useState('');
+  const [loading, setLoading] = useState(true);
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  // ページ読み込み時にデータを取得
+  useEffect(() => {
+    fetchItems();
+  }, []);
+
+  const fetchItems = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('shopping_items')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setItems(data || []);
+    } catch (error) {
+      console.error('データの取得に失敗しました:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (productName.trim() && shopName.trim()) {
-      const newItem: ShoppingItem = {
-        id: Date.now().toString(),
-        productName: productName.trim(),
-        shopName: shopName.trim(),
-      };
-      setItems([...items, newItem]);
-      setProductName('');
-      setShopName('');
+      try {
+        const { data, error } = await supabase
+          .from('shopping_items')
+          .insert({
+            product_name: productName.trim(),
+            shop_name: shopName.trim(),
+            completed: false,
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+        setItems([data, ...items]);
+        setProductName('');
+        setShopName('');
+      } catch (error) {
+        console.error('データの追加に失敗しました:', error);
+      }
     }
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (confirm('このアイテムを削除しますか？')) {
-      setItems(items.filter((item) => item.id !== id));
+      try {
+        const { error } = await supabase
+          .from('shopping_items')
+          .delete()
+          .eq('id', id);
+
+        if (error) throw error;
+        setItems(items.filter((item) => item.id !== id));
+      } catch (error) {
+        console.error('データの削除に失敗しました:', error);
+      }
     }
   };
 
-  const handleDeleteAll = () => {
+  const handleDeleteAll = async () => {
     if (confirm('すべてのアイテムを削除しますか？この操作は取り消せません。')) {
-      setItems([]);
+      try {
+        const { error } = await supabase
+          .from('shopping_items')
+          .delete()
+          .neq('id', '00000000-0000-0000-0000-000000000000'); // 全削除のため存在しないIDと比較
+
+        if (error) throw error;
+        setItems([]);
+      } catch (error) {
+        console.error('データの全削除に失敗しました:', error);
+      }
     }
   };
+
+  const handleToggleComplete = async (id: string) => {
+    const item = items.find((item) => item.id === id);
+    if (!item) return;
+
+    try {
+      const { error } = await supabase
+        .from('shopping_items')
+        .update({ completed: !item.completed })
+        .eq('id', id);
+
+      if (error) throw error;
+      setItems(
+        items.map((item) =>
+          item.id === id ? { ...item, completed: !item.completed } : item
+        )
+      );
+    } catch (error) {
+      console.error('データの更新に失敗しました:', error);
+    }
+  };
+
+  const completedCount = items.filter((item) => item.completed).length;
+  const remainingCount = items.length - completedCount;
+
+  if (loading) {
+    return (
+      <main className="min-h-screen p-8 flex items-center justify-center">
+        <div className="text-white text-xl">読み込み中...</div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen p-8">
@@ -82,9 +167,16 @@ export default function Home() {
         {/* 一覧表示 */}
         <div className="space-y-4">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-2xl font-bold text-white">
-              買い物リスト ({items.length})
-            </h2>
+            <div>
+              <h2 className="text-2xl font-bold text-white">
+                買い物リスト ({items.length})
+              </h2>
+              {items.length > 0 && (
+                <p className="text-sm text-white/80">
+                  未完了: {remainingCount} / 完了: {completedCount}
+                </p>
+              )}
+            </div>
             {items.length > 0 && (
               <button
                 onClick={handleDeleteAll}
@@ -103,16 +195,36 @@ export default function Home() {
               {items.map((item) => (
                 <div
                   key={item.id}
-                  className="bg-white rounded-lg shadow-lg p-6 hover:shadow-xl transition-shadow duration-200"
+                  className={`rounded-lg shadow-lg p-6 hover:shadow-xl transition-all duration-200 ${
+                    item.completed ? 'bg-gray-100' : 'bg-white'
+                  }`}
                 >
                   <div className="flex flex-col">
-                    <div className="flex-1 mb-4">
-                      <h3 className="text-lg font-semibold text-gray-800 mb-2">
-                        {item.productName}
-                      </h3>
-                      <p className="text-sm text-gray-600">
-                        <span className="font-medium">ショップ:</span> {item.shopName}
-                      </p>
+                    <div className="flex items-start gap-3 mb-4">
+                      <input
+                        type="checkbox"
+                        checked={item.completed}
+                        onChange={() => handleToggleComplete(item.id)}
+                        className="mt-1 h-5 w-5 rounded border-gray-300 text-orange-500 focus:ring-orange-500 cursor-pointer"
+                      />
+                      <div className="flex-1">
+                        <h3
+                          className={`text-lg font-semibold mb-2 ${
+                            item.completed
+                              ? 'text-gray-400 line-through'
+                              : 'text-gray-800'
+                          }`}
+                        >
+                          {item.product_name}
+                        </h3>
+                        <p
+                          className={`text-sm ${
+                            item.completed ? 'text-gray-400' : 'text-gray-600'
+                          }`}
+                        >
+                          <span className="font-medium">ショップ:</span> {item.shop_name}
+                        </p>
+                      </div>
                     </div>
                     <button
                       onClick={() => handleDelete(item.id)}

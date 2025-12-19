@@ -1,7 +1,11 @@
 export interface ShoppingItem {
   id: string;
-  productName: string;
-  shopName: string;
+  product_name: string;
+  shop_name: string;
+  completed: boolean;
+  created_at: string;
 }
+
+
 
 
